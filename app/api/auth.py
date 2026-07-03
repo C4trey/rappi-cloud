@@ -76,3 +76,15 @@ async def register(user: UserCreate, db: Session = Depends(get_db)):
     db.refresh(new_user)
     
     return {"message": "Usuario registrado exitosamente"}
+
+@router.post("/api/logout", status_code=status.HTTP_200_OK)
+async def logout(current_user: DBUser = Depends(get_current_user)):
+    """
+    Endpoint para cerrar sesión. 
+    Como usamos JWT (Stateless), el servidor no destruye el token.
+    La responsabilidad de eliminarlo recae en el cliente (Frontend/Postman).
+    """
+    return {
+        "message": f"Logout exitoso para el usuario {current_user.username}.",
+        "instruction": "Por favor, elimina el token guardado en tu aplicación cliente."
+    }
