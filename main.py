@@ -1,23 +1,17 @@
-from app.api import auth
+from fastapi import FastAPI
+from app.api import auth, orders, driver
 from app.core.database import engine, Base
-# Importamos los modelos para que SQLAlchemy sepa qué tablas crear
 from app.models import user_db
-from fastapi import FastAPI, Depends
+from app.models.user_db import DBUser
+from app.models.order_db import DBOrder 
+
+# Crea las tablas en SQLite
 Base.metadata.create_all(bind=engine)
+
+# Inicializa FastAPI
 app = FastAPI(title="Rappi Simulator API")
 
-# Incluimos el router de autenticación
+# Incluimos los routers
 app.include_router(auth.router)
-
-# Importamos la dependencia que verifica el token
-from app.api.auth import get_current_user
-from app.models.user import User
-
-# Ejemplo de ruta protegida (requiere token JWT)
-@app.post("/api/orders", status_code=201)
-async def create_order(current_user: User = Depends(get_current_user)):
-    return {
-        "message": "Pedido creado", 
-        "user": current_user.username,
-        "note": "Aquí irá la lógica para disparar el evento a AWS"
-    }
+app.include_router(orders.router)
+app.include_router(driver.router)
