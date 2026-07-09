@@ -10,14 +10,13 @@ router = APIRouter()
 # 1. Repartidor ve los pedidos que ya fueron empacados por Madam Tusan
 @router.get("/api/driver/orders")
 async def get_available_orders(db: Session = Depends(get_db), current_user: DBUser = Depends(get_current_user)):
+    
     if current_user.role != "driver":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Acceso denegado. Esta sección es exclusiva para repartidores."
-        )
-    # Buscamos pedidos que AWS haya marcado como empacados y que no tengan repartidor
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acceso denegado.")
+
+    # CAMBIO AQUÍ: Ahora buscamos los que están listos para entregar según AWS
     available_orders = db.query(DBOrder).filter(
-        DBOrder.status == "PACK_COMPLETED", 
+        DBOrder.status == "WAITING_DELIVER", 
         DBOrder.driver_username == None
     ).all()
     

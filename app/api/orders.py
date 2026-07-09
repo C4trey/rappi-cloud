@@ -24,47 +24,50 @@ class StatusUpdate(BaseModel):
 
 # --- TAREAS EN SEGUNDO PLANO ---
 def send_order_to_aws(order_data: dict):
-    aws_url = os.getenv("AWS_API_GATEWAY_URL", "URL_PENDIENTE")
+    aws_url = os.getenv("AWS_API_GATEWAY_URL", "")
     secret = os.getenv("RAPPI_SHARED_SECRET", "un-secreto-largo")
     headers = {"X-Rappi-Secret": secret}
-    
-    if aws_url == "URL_PENDIENTE":
-        print(f"[SIMULACIÓN] Pedido listo para enviar. Falta URL de AWS.")
-        return
-
     try:
-        # Apuntamos al endpoint específico para crear órdenes de Rappi
         response = requests.post(f"{aws_url}/integrations/rappi/orders", json=order_data, headers=headers)
         response.raise_for_status()
         print(f"[ÉXITO] Pedido enviado a AWS: {response.status_code}")
     except Exception as e:
         print(f"[ERROR] Falló al enviar a AWS: {e}")
 
-def send_receipt_confirmation_to_aws(order_id: str):
-    aws_url = os.getenv("AWS_API_GATEWAY_URL", "URL_PENDIENTE")
-    secret = os.getenv("RAPPI_SHARED_SECRET", "un-secreto-largo")
-    headers = {"X-Rappi-Secret": secret}
-    
-    if aws_url != "URL_PENDIENTE":
-        try:
-            response = requests.post(f"{aws_url}/integrations/rappi/orders/{order_id}/receive", json={}, headers=headers)
-            response.raise_for_status()
-            print(f"[ÉXITO] Recepción confirmada en AWS para la orden {order_id}")
-        except Exception as e:
-            print(f"[ERROR] Falló al confirmar recepción en AWS: {e}")
 
-# --- 1. ENDPOINT: CLIENTE CREA PEDIDO ---
+# --- RUTAS ---
 @router.post("/api/orders", status_code=status.HTTP_201_CREATED)
 async def create_order(
     order: OrderCreate, 
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: DBUser = Depends(get_current_user)
 ):
-    order_id = str(uuid.uuid4())
+    # 1. Empaquetamos los datos para AWS
+    order_payload = {
+        "tenant_id": "madamtusan",
+        "customer_id": current_user.username,
+        "items": [item.dict() for item in order.items]
+    }
     
+    # 2. Enviamos el pedido a AWS y ESPERAMOS su respuesta
+    aws_url = os.getenv("AWS_API_GATEWAY_URL", "")
+    secret = os.getenv("RAPPI_SHARED_SECRET", "un-secreto-largo")
+    headers = {"X-Rappi-Secret": secret}
+    
+    try:
+        response = requests.post(f"{aws_url}/integrations/rappi/orders", json=order_payload, headers=headers)
+        response.raise_for_status()
+        
+        # 3. ¡Capturamos el ID oficial de AWS!
+        aws_data = response.json()
+        aws_order_id = aws_data["order_id"]
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error conectando con AWS: {e}")
+
+    # 4. Guardamos en nuestra BD local usando el ID maestro de AWS
     new_order = DBOrder(
-        id=order_id,
+        id=aws_order_id,
         username=current_user.username,
         total_price=order.total_price,
         delivery_address=order.delivery_address,
@@ -73,26 +76,17 @@ async def create_order(
     db.add(new_order)
     db.commit()
 
-    order_payload = {
-    "tenant_id": "madamtusan", # Dato quemado obligatorio según el README
-    "customer_id": current_user.username, # Traducimos el nombre de usuario
-    "items": [item.dict() for item in order.items] # Pasamos la lista de productos
-}
+    print(f"\n[ÉXITO] Pedido sincronizado. ID Maestro: {aws_order_id}\n")
+    return {"message": "Pedido registrado", "order_id": aws_order_id}
 
-# Enviamos ese paquete (payload) hacia el API Gateway de tus compañeros
-    background_tasks.add_task(send_order_to_aws, order_payload)
-    return {"message": "Pedido registrado", "order_id": order_id}
-
-# --- 2. ENDPOINT: WEBHOOK DE AWS ---
-# Exigimos el header x_rappi_secret para autorizar la petición
 @router.post("/api/estado", status_code=status.HTTP_200_OK)
 async def update_order_status_from_aws(
     update: StatusUpdate, 
-    x_rappi_secret: str = Header(...), 
+    x_rappi_secret: str = Header(None), 
     db: Session = Depends(get_db)
 ):
     # Validamos que el secreto coincida
-    if x_rappi_secret != os.getenv("RAPPI_SHARED_SECRET"):
+    if x_rappi_secret != os.getenv("RAPPI_SHARED_SECRET", "un-secreto-largo"):
         raise HTTPException(status_code=401, detail="Secreto inválido")
 
     db_order = db.query(DBOrder).filter(DBOrder.id == update.order_id).first()
@@ -102,27 +96,40 @@ async def update_order_status_from_aws(
     db_order.status = update.status
     db.commit()
     
+    # Imprimimos en verde en la consola para saber que funcionó
+    print(f"\n✅ [AWS NOTIFICA] El pedido {update.order_id} cambió a estado: {update.status}\n")
     return {"message": "Estado actualizado exitosamente"}
 
-# --- 3. ENDPOINT: CLIENTE CONFIRMA RECEPCIÓN ---
 @router.post("/api/orders/{order_id}/confirm")
 async def confirm_receipt(
     order_id: str, 
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db), 
     current_user: DBUser = Depends(get_current_user)
 ):
+    # 1. Buscamos el pedido
     db_order = db.query(DBOrder).filter(DBOrder.id == order_id, DBOrder.username == current_user.username).first()
     if not db_order:
         raise HTTPException(status_code=404, detail="Pedido no encontrado")
         
+    # 2. Intentamos sincronizar con AWS PRIMERO
+    aws_url = os.getenv("AWS_API_GATEWAY_URL", "")
+    secret = os.getenv("RAPPI_SHARED_SECRET", "un-secreto-largo")
+    headers = {"X-Rappi-Secret": secret}
+    
+    try:
+        response = requests.post(f"{aws_url}/integrations/rappi/orders/{order_id}/receive", json={}, headers=headers)
+        response.raise_for_status() # Lanza error si AWS no responde 200 OK
+    except Exception as e:
+        # Extraemos el mensaje de error exacto que AWS nos mandó
+        error_msg = response.json().get("message", str(e)) if 'response' in locals() and response else str(e)
+        raise HTTPException(status_code=400, detail=f"AWS rechazó la confirmación: {error_msg}")
+
+    # 3. Solo si AWS aceptó, actualizamos nuestra BD local
     db_order.status = "COMPLETED"
     db.commit()
     
-    background_tasks.add_task(send_receipt_confirmation_to_aws, order_id)
-    return {"message": "Has confirmado la recepción de tu pedido."}
+    return {"message": "Has confirmado la recepción."}
 
-# --- 4. ENDPOINT: CONSULTAR ESTADO ---
 @router.get("/api/orders/{order_id}")
 async def get_order_status(order_id: str, db: Session = Depends(get_db), current_user: DBUser = Depends(get_current_user)):
     db_order = db.query(DBOrder).filter(DBOrder.id == order_id, DBOrder.username == current_user.username).first()
