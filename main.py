@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware # <-- Nueva importación
 from app.api import auth, orders, driver
 from app.core.database import engine, Base
 from app.models import user_db
@@ -10,6 +11,16 @@ Base.metadata.create_all(bind=engine)
 
 # Inicializa FastAPI
 app = FastAPI(title="Rappi Simulator API")
+
+# <-- INICIO DE LA SOLUCIÓN DEL CORS -->
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Permite que el React de tu amigo se conecte
+    allow_credentials=True,
+    allow_methods=["*"],  # Permite POST, GET, OPTIONS, etc.
+    allow_headers=["*"],
+)
+# <-- FIN DE LA SOLUCIÓN DEL CORS -->
 
 # Incluimos los routers
 app.include_router(auth.router)
