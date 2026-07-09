@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean
+from sqlalchemy import Column, Integer, String
 from app.core.database import Base
 
 class DBUser(Base):
@@ -6,5 +6,6 @@ class DBUser(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
+    email = Column(String, unique=True, index=True) # <-- NUEVA COLUMNA
     hashed_password = Column(String)
-    is_active = Column(Boolean, default=True)
+    role = Column(String, default="customer")

@@ -10,6 +10,11 @@ router = APIRouter()
 # 1. Repartidor ve los pedidos que ya fueron empacados por Madam Tusan
 @router.get("/api/driver/orders")
 async def get_available_orders(db: Session = Depends(get_db), current_user: DBUser = Depends(get_current_user)):
+    if current_user.role != "driver":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Acceso denegado. Esta sección es exclusiva para repartidores."
+        )
     # Buscamos pedidos que AWS haya marcado como empacados y que no tengan repartidor
     available_orders = db.query(DBOrder).filter(
         DBOrder.status == "PACK_COMPLETED", 
@@ -21,6 +26,12 @@ async def get_available_orders(db: Session = Depends(get_db), current_user: DBUs
 # 2. Repartidor acepta llevar un pedido
 @router.post("/api/driver/orders/{order_id}/accept")
 async def accept_order(order_id: str, db: Session = Depends(get_db), current_user: DBUser = Depends(get_current_user)):
+    if current_user.role != "driver":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Acceso denegado. Esta sección es exclusiva para repartidores."
+        )
+    
     db_order = db.query(DBOrder).filter(DBOrder.id == order_id).first()
     
     if not db_order:
@@ -37,6 +48,11 @@ async def accept_order(order_id: str, db: Session = Depends(get_db), current_use
 # 3. Repartidor marca el pedido como entregado en la puerta del cliente
 @router.post("/api/driver/orders/{order_id}/delivered")
 async def order_delivered(order_id: str, db: Session = Depends(get_db), current_user: DBUser = Depends(get_current_user)):
+    if current_user.role != "driver":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Acceso denegado. Esta sección es exclusiva para repartidores."
+        )
     db_order = db.query(DBOrder).filter(
         DBOrder.id == order_id, 
         DBOrder.driver_username == current_user.username

@@ -38,6 +38,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     
     return user
 
+
 @router.post("/api/login", response_model=Token)
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -54,28 +55,50 @@ async def login(
     access_token = create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
+
+
 # Aquí agregamos el registro real
 from pydantic import BaseModel
 class UserCreate(BaseModel):
     username: str
+    email: str
     password: str
+    role: str = "customer"
 
 @router.post("/api/register", status_code=status.HTTP_201_CREATED)
 async def register(user: UserCreate, db: Session = Depends(get_db)):
-    # Verificamos si ya existe
+    # 1. Verificamos si el username ya existe
     db_user = db.query(DBUser).filter(DBUser.username == user.username).first()
     if db_user:
         raise HTTPException(status_code=400, detail="El usuario ya existe")
+        
+    # 2. Verificamos si el email ya está registrado
+    db_email = db.query(DBUser).filter(DBUser.email == user.email).first()
+    if db_email:
+        raise HTTPException(status_code=400, detail="Este correo ya está en uso")
     
-    # Creamos el nuevo usuario en la BD
+    # 3. Validamos el rol
+    if user.role not in ["customer", "driver"]:
+        raise HTTPException(status_code=400, detail="Rol inválido. Debe ser 'customer' o 'driver'")
+    
+    # 4. Creamos el usuario incluyendo el email
     hashed_pwd = get_password_hash(user.password)
-    new_user = DBUser(username=user.username, hashed_password=hashed_pwd)
+    new_user = DBUser(
+        username=user.username, 
+        email=user.email, 
+        hashed_password=hashed_pwd, 
+        role=user.role
+    )
     
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+    if user.role == "driver":
+        return {"message": f"Repartidor {user.username} registrado exitosamente"}
     
-    return {"message": "Usuario registrado exitosamente"}
+    return {"message": f"Usuario {user.username} registrado exitosamente"}
+
+
 
 @router.post("/api/logout", status_code=status.HTTP_200_OK)
 async def logout(current_user: DBUser = Depends(get_current_user)):
